@@ -1,3 +1,4 @@
+
 "use client";
 
 import Link from "next/link";
@@ -21,7 +22,14 @@ import {
   LogIn,
   UserPlus,
   Send,
+  UserRound,
+  ShieldCheck,
+  LogOut,
+  Search,
 } from "lucide-react";
+
+import { useNavigationAuth } from "@/hooks/useNavigationAuth";
+import { createClient } from "@/lib/supabase/client";
 
 const navItems = [
   {
@@ -104,8 +112,11 @@ export default function Navbar() {
   const pathname = usePathname();
   const headerRef = useRef<HTMLElement>(null);
 
+  const { user, isAdmin } = useNavigationAuth();
+
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dropdown, setDropdown] = useState<string | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -133,7 +144,6 @@ export default function Navbar() {
     };
   }, []);
 
-  // Close open menus whenever the current route changes.
   useEffect(() => {
     setMobileOpen(false);
     setDropdown(null);
@@ -146,6 +156,31 @@ export default function Navbar() {
 
   function toggleDropdown(label: string) {
     setDropdown((current) => (current === label ? null : label));
+  }
+
+  async function handleLogout() {
+    if (loggingOut) return;
+
+    setLoggingOut(true);
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signOut();
+
+      if (error) {
+        console.error("Logout failed:", error.message);
+        window.alert("Logout failed. Please try again.");
+        setLoggingOut(false);
+        return;
+      }
+
+      closeMenus();
+      window.location.assign("/");
+    } catch (error) {
+      console.error("Logout failed:", error);
+      window.alert("Unable to log out. Please try again.");
+      setLoggingOut(false);
+    }
   }
 
   const primaryButton =
@@ -163,12 +198,18 @@ export default function Navbar() {
     "!text-black transition-colors hover:bg-neutral-100 hover:!text-black " +
     "[&_svg]:!text-black";
 
+  // Hide public navigation on admin pages.
+  // The admin area should have its own layout.
+  if (pathname.startsWith("/admin")) {
+    return null;
+  }
+
   return (
     <header
       ref={headerRef}
       className="sticky top-0 z-50 w-full border-b border-neutral-200 bg-white text-black"
     >
-      <div className="mx-auto flex min-h-[68px] max-w-[1440px] items-center justify-between gap-2 px-3 sm:min-h-[76px] sm:gap-4 sm:px-6 lg:min-h-[82px] lg:px-8">
+      <div className="mx-auto flex min-h-17 max-w-[1440px] items-center justify-between gap-2 px-3 sm:min-h-[76px] sm:gap-4 sm:px-6 lg:min-h-[82px] lg:px-8">
         {/* Brand */}
         <Link
           href="/"
@@ -176,11 +217,8 @@ export default function Navbar() {
           aria-label="Milton's Pharma homepage"
           className="min-w-0 shrink-0 text-black no-underline hover:text-black"
           onClick={(event) => {
-            // Preserve the requested full homepage reload.
             event.preventDefault();
-            window.location.assign(
-              new URL("/", window.location.origin).toString(),
-            );
+            window.location.assign("/");
           }}
         >
           <span className="block whitespace-nowrap text-[16px] font-bold leading-tight tracking-[-0.6px] text-black sm:text-[21px] sm:tracking-[-0.7px]">
@@ -264,9 +302,7 @@ export default function Navbar() {
                           href={child.href}
                           onClick={closeMenus}
                           className={`flex items-center gap-3 rounded-xl p-3 text-black transition-colors ${
-                            childActive
-                              ? "bg-neutral-100"
-                              : "hover:bg-neutral-50"
+                            childActive ? "bg-neutral-100" : "hover:bg-neutral-50"
                           }`}
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-200 text-black">
@@ -298,34 +334,82 @@ export default function Navbar() {
 
         {/* Desktop account actions */}
         <div className="hidden shrink-0 items-center gap-1 xl:flex">
-          <Link
-            href="/login"
-            onClick={closeMenus}
-            className={secondaryButton}
-          >
-            <LogIn size={16} />
-            <span>Log in</span>
-          </Link>
+          {user ? (
+            <>
+              {isAdmin && (
+                <Link
+                  href="/admin"
+                  onClick={closeMenus}
+                  className={secondaryButton}
+                >
+                  <ShieldCheck size={16} />
+                  <span>Admin Panel</span>
+                </Link>
+              )}
 
-          <Link
-            href="/signup"
-            onClick={closeMenus}
-            className={`${primaryButton} min-w-[148px] px-5`}
-          >
-            <UserPlus size={17} />
-            <span className="!text-white">Create account</span>
-          </Link>
+              <Link
+                href="/profile"
+                onClick={closeMenus}
+                className={secondaryButton}
+              >
+                <UserRound size={16} />
+                <span>Profile</span>
+              </Link>
+
+              <button
+                type="button"
+                disabled={loggingOut}
+                onClick={handleLogout}
+                className={`${secondaryButton} disabled:opacity-50`}
+              >
+                <LogOut size={16} />
+                <span>{loggingOut ? "Logging out..." : "Logout"}</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                onClick={closeMenus}
+                className={secondaryButton}
+              >
+                <LogIn size={16} />
+                <span>Log in</span>
+              </Link>
+
+              <Link
+                href="/signup"
+                onClick={closeMenus}
+                className={`${primaryButton} min-w-[148px] px-5`}
+              >
+                <UserPlus size={17} />
+                <span className="!text-white">Create account</span>
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Mobile and tablet actions */}
         <div className="flex shrink-0 items-center gap-2 lg:hidden">
-          <Link
-            href="/signup"
-            onClick={closeMenus}
-            className={`${primaryButton} min-h-10 px-3 text-xs sm:px-4 sm:text-sm`}
-          >
-            <span className="!text-white">Sign up</span>
-          </Link>
+          {user ? (
+            <Link
+              href={isAdmin ? "/admin" : "/profile"}
+              onClick={closeMenus}
+              aria-label={isAdmin ? "Admin Panel" : "Profile"}
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-200 text-black transition-colors hover:bg-neutral-100"
+            >
+              {isAdmin ? <ShieldCheck size={19} /> : <UserRound size={19} />}
+            </Link>
+          ) : (
+            <Link
+              href="/login"
+              onClick={closeMenus}
+              className={`${secondaryButton} min-h-10 px-3 text-xs sm:px-4 sm:text-sm`}
+            >
+              <LogIn size={16} />
+              <span>Log in</span>
+            </Link>
+          )}
 
           <button
             type="button"
@@ -440,22 +524,67 @@ export default function Navbar() {
 
             <div className="my-3 border-t border-neutral-200" />
 
-            <Link
-              href="/login"
-              onClick={closeMenus}
-              className="flex min-h-12 items-center gap-3 rounded-xl px-4 text-sm font-medium !text-black transition-colors hover:bg-neutral-50"
-            >
-              <LogIn size={18} />
-              <span>Log in</span>
-            </Link>
+            {user ? (
+              <>
+                {isAdmin && (
+                  <Link
+                    href="/admin"
+                    onClick={closeMenus}
+                    className="flex min-h-12 items-center gap-3 rounded-xl px-4 text-sm font-medium text-black transition-colors hover:bg-neutral-50"
+                  >
+                    <ShieldCheck size={18} />
+                    <span>Admin Panel</span>
+                  </Link>
+                )}
+
+                <Link
+                  href="/profile"
+                  onClick={closeMenus}
+                  className="flex min-h-12 items-center gap-3 rounded-xl px-4 text-sm font-medium text-black transition-colors hover:bg-neutral-50"
+                >
+                  <UserRound size={18} />
+                  <span>My Profile</span>
+                </Link>
+
+                <button
+                  type="button"
+                  disabled={loggingOut}
+                  onClick={handleLogout}
+                  className="flex min-h-12 w-full items-center gap-3 rounded-xl px-4 text-left text-sm font-medium text-black transition-colors hover:bg-neutral-50 disabled:opacity-50"
+                >
+                  <LogOut size={18} />
+                  <span>{loggingOut ? "Logging out..." : "Logout"}</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  onClick={closeMenus}
+                  className="flex min-h-12 items-center gap-3 rounded-xl px-4 text-sm font-medium text-black transition-colors hover:bg-neutral-50"
+                >
+                  <LogIn size={18} />
+                  <span>Log in</span>
+                </Link>
+
+                <Link
+                  href="/signup"
+                  onClick={closeMenus}
+                  className={`${primaryButton} flex w-full min-h-12`}
+                >
+                  <UserPlus size={17} />
+                  <span className="!text-white">Create account</span>
+                </Link>
+              </>
+            )}
 
             <Link
-              href="/signup"
+              href="/search"
               onClick={closeMenus}
-              className={`${primaryButton} flex w-full min-h-12`}
+              className="flex min-h-12 items-center gap-3 rounded-xl px-4 text-sm font-medium text-black transition-colors hover:bg-neutral-50"
             >
-              <UserPlus size={17} />
-              <span className="!text-white">Create account</span>
+              <Search size={18} />
+              <span>Search study materials</span>
             </Link>
           </nav>
         </div>
