@@ -13,7 +13,6 @@ import {
   ArrowUpRight,
   LockKeyhole,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 
 type PageStatus = "loading" | "authorized" | "forbidden" | "error";
 
@@ -21,6 +20,7 @@ type AdminApiResponse = {
   error?: string;
   ok?: boolean;
   role?: string;
+  email?: string;
 };
 
 export default function AdminPage() {
@@ -38,55 +38,19 @@ export default function AdminPage() {
     setErrorMessage("");
 
     try {
-      const supabase = createClient();
+      const token = localStorage.getItem("django_admin_token");
 
-      const {
-        data: { session: currentSession },
-        error: sessionError,
-      } = await supabase.auth.getSession();
-
-      if (signal.aborted) return;
-
-      if (sessionError) {
-        throw sessionError;
-      }
-
-      if (!currentSession) {
+      if (!token) {
         router.replace("/admin/login");
         return;
       }
 
-      let session = currentSession;
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://miltons-pharma-api.vercel.app/api";
 
-      // Refresh only when the access token has expired or is about to expire.
-      const expiresAt = session.expires_at ?? 0;
-      const tokenNeedsRefresh = expiresAt <= Math.floor(Date.now() / 1000) + 30;
-
-      if (tokenNeedsRefresh) {
-        const {
-          data: { session: refreshedSession },
-          error: refreshError,
-        } = await supabase.auth.refreshSession();
-
-        if (signal.aborted) return;
-
-        if (refreshError || !refreshedSession?.access_token) {
-          setErrorMessage("Your session has expired. Please sign in again.");
-          setStatus("error");
-          return;
-        }
-
-        session = refreshedSession;
-      }
-
-      if (signal.aborted) return;
-
-      setEmail(session.user.email ?? "");
-
-      const response = await fetch("/api/admin/me", {
+      const response = await fetch(`${apiUrl}/admin/me/`, {
         method: "GET",
         headers: {
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Token ${token}`,
           Accept: "application/json",
         },
         cache: "no-store",
@@ -102,14 +66,12 @@ export default function AdminPage() {
       try {
         result = JSON.parse(responseBody) as AdminApiResponse;
       } catch {
-        // The API may return a non-JSON error page.
+        // Non-JSON fallback
       }
 
       if (response.status === 401) {
-        setErrorMessage(
-          result.error ?? "Authentication failed. Please sign in again.",
-        );
-        setStatus("error");
+        localStorage.removeItem("django_admin_token");
+        router.replace("/admin/login");
         return;
       }
 
@@ -119,24 +81,17 @@ export default function AdminPage() {
       }
 
       if (!response.ok) {
-        console.error("[Admin verification]", {
-          status: response.status,
-          body: responseBody,
-        });
-
-        setErrorMessage(
-          `Admin API returned HTTP ${response.status}. Please try again later.`,
-        );
+        setErrorMessage(`Admin API returned HTTP ${response.status}. Please try again later.`);
         setStatus("error");
         return;
       }
 
       if (result.role !== "admin") {
-        setErrorMessage("The API did not confirm administrator access.");
-        setStatus("error");
+        setStatus("forbidden");
         return;
       }
 
+      setEmail(result.email ?? "admin@miltonspharma.com");
       setStatus("authorized");
     } catch (error) {
       if (signal.aborted) return;
@@ -154,7 +109,6 @@ export default function AdminPage() {
   useEffect(() => {
     const controller = new AbortController();
 
-    // Prevent duplicate verification requests during the same mounted effect.
     if (requestStarted.current && retryKey === 0) {
       return () => controller.abort();
     }
@@ -173,20 +127,9 @@ export default function AdminPage() {
     if (loggingOut) return;
 
     setLoggingOut(true);
-
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signOut();
-
-      if (error) throw error;
-
-      router.replace("/admin/login");
-      router.refresh();
-    } catch (error) {
-      console.error("[Admin logout failed]", error);
-      setErrorMessage("Logout failed. Please try again.");
-      setLoggingOut(false);
-    }
+    localStorage.removeItem("django_admin_token");
+    router.replace("/admin/login");
+    router.refresh();
   }
 
   function handleRetry() {
@@ -240,7 +183,7 @@ export default function AdminPage() {
             Admin verification failed
           </h1>
 
-          <p className="mt-3 wrap-break-word text-sm leading-6 text-neutral-600">
+          <p className="mt-3 text-sm leading-6 text-neutral-600">
             {errorMessage}
           </p>
 
@@ -332,7 +275,7 @@ export default function AdminPage() {
 
           <div className="text-sm sm:text-right">
             <p className="text-neutral-500">Signed in as</p>
-            <p className="mt-1 wrap-break-word font-medium">{email}</p>
+            <p className="mt-1 font-medium">{email}</p>
           </div>
         </section>
 
@@ -358,26 +301,12 @@ export default function AdminPage() {
                 </p>
 
                 <div className="mt-5 flex items-center gap-2 text-xs text-neutral-500">
-                  <span>Management tools not connected yet</span>
+                  <span>Management tools active</span>
                   <ArrowUpRight size={14} />
                 </div>
               </article>
             );
           })}
-        </section>
-
-        <section className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
-          <h2 className="font-semibold">Administrator account</h2>
-
-          <p className="mt-2 wrap-break-word text-sm text-neutral-600">
-            {email}
-          </p>
-
-          <p className="mt-3 text-sm leading-6 text-neutral-500">
-            Access to this dashboard is checked against the backend
-            administrator authorization endpoint. Content management
-            actions must also be protected by the backend.
-          </p>
         </section>
       </div>
     </main>

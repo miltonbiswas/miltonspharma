@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -144,10 +143,7 @@ export default function Navbar() {
     };
   }, []);
 
-  useEffect(() => {
-    setMobileOpen(false);
-    setDropdown(null);
-  }, [pathname]);
+
 
   function closeMenus() {
     setMobileOpen(false);
@@ -199,7 +195,6 @@ export default function Navbar() {
     "[&_svg]:!text-black";
 
   // Hide public navigation on admin pages.
-  // The admin area should have its own layout.
   if (pathname.startsWith("/admin")) {
     return null;
   }
@@ -333,28 +328,39 @@ export default function Navbar() {
         </nav>
 
         {/* Desktop account actions */}
-        <div className="hidden shrink-0 items-center gap-1 xl:flex">
+        <div className="hidden shrink-0 items-center gap-1.5 xl:flex">
           {user ? (
             <>
-              {isAdmin && (
+              {isAdmin ? (
+                <>
+                  <Link
+                    href="/admin"
+                    onClick={closeMenus}
+                    className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full border border-neutral-900 bg-neutral-900 px-4 text-sm font-semibold !text-white shadow-xs transition-colors hover:bg-neutral-800"
+                  >
+                    <ShieldCheck size={16} className="text-white" />
+                    <span>Admin Panel</span>
+                  </Link>
+
+                  <Link
+                    href="/profile"
+                    onClick={closeMenus}
+                    className={secondaryButton}
+                  >
+                    <UserRound size={16} />
+                    <span>Profile</span>
+                  </Link>
+                </>
+              ) : (
                 <Link
-                  href="/admin"
+                  href="/profile"
                   onClick={closeMenus}
-                  className={secondaryButton}
+                  className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full border border-neutral-300 bg-neutral-50 px-4 text-sm font-semibold text-neutral-900 transition-colors hover:bg-neutral-100"
                 >
-                  <ShieldCheck size={16} />
-                  <span>Admin Panel</span>
+                  <UserRound size={16} className="text-neutral-700" />
+                  <span>My Profile</span>
                 </Link>
               )}
-
-              <Link
-                href="/profile"
-                onClick={closeMenus}
-                className={secondaryButton}
-              >
-                <UserRound size={16} />
-                <span>Profile</span>
-              </Link>
 
               <button
                 type="button"
@@ -530,9 +536,9 @@ export default function Navbar() {
                   <Link
                     href="/admin"
                     onClick={closeMenus}
-                    className="flex min-h-12 items-center gap-3 rounded-xl px-4 text-sm font-medium text-black transition-colors hover:bg-neutral-50"
+                    className="flex min-h-12 items-center gap-3 rounded-xl bg-neutral-900 px-4 text-sm font-medium text-white transition-colors hover:bg-neutral-800"
                   >
-                    <ShieldCheck size={18} />
+                    <ShieldCheck size={18} className="text-white" />
                     <span>Admin Panel</span>
                   </Link>
                 )}

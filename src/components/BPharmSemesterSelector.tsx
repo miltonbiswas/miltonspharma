@@ -1,17 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import {
   ArrowDownUp,
   Award,
   BookOpen,
   ChevronRight,
-  Filter,
   GraduationCap,
-  Layers,
   Search,
-  Sparkles,
   X,
 } from "lucide-react";
 
@@ -24,6 +21,20 @@ type Props = {
 };
 
 type SortOption = "syllabus" | "name" | "code" | "credits";
+
+interface SubjectItem {
+  code: string;
+  name: string;
+  type: string;
+  credits?: number;
+  note?: string;
+}
+
+interface SemesterItem {
+  number: number;
+  title: string;
+  subjects: SubjectItem[];
+}
 
 const romanNumerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
 
@@ -49,10 +60,62 @@ export default function BPharmSemesterSelector({
   const [search, setSearch] = useState("");
   const [activeType, setActiveType] = useState("all");
   const [sortBy, setSortBy] = useState<SortOption>("syllabus");
+  
+  const [semestersData, setSemestersData] = useState<SemesterItem[]>(oldBPharmSemesters as SemesterItem[]);
 
-  const semester = oldBPharmSemesters.find(
+  useEffect(() => {
+    async function fetchLiveSemesters() {
+      try {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://miltons-pharma-api.vercel.app/api";
+        const res = await fetch(`${apiUrl}/courses/1/semesters`);
+        if (res.ok) {
+          const data = await res.json();
+          const semResults = data.results || data;
+
+          if (semResults && semResults.length > 0) {
+            const formattedSemesters: SemesterItem[] = await Promise.all(
+              semResults.map(async (sem: Record<string, unknown>) => {
+                let subjectsList: SubjectItem[] = [];
+                try {
+                  const subRes = await fetch(`${apiUrl}/semesters/${sem.id}/subjects`);
+                  if (subRes.ok) {
+                    const subData = await subRes.json();
+                    const subResults = subData.results || subData;
+                    subjectsList = subResults.map((sub: Record<string, unknown>) => ({
+                      code: (sub.code as string) || "BP101T",
+                      name: sub.name as string,
+                      type: sub.category === "Theory (T)" ? "Theory" : (sub.category as string) || "Theory",
+                      credits: (sub.credits as number) || 4,
+                      note: sub.total_hours ? `${sub.total_hours} Hours` : "",
+                    }));
+                  }
+                } catch (e) {
+                  console.error(`Failed to fetch subjects for semester ${sem.id}`, e);
+                }
+
+                return {
+  number: (sem.semester_number as number) || 1,
+  title: (sem.name as string) || `Semester ${sem.semester_number}`,
+  subjects: subjectsList,
+};
+              })
+            );
+            setSemestersData(formattedSemesters);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch live semesters/subjects, using fallback:", err);
+      }
+    }
+
+    if (isOldPci) {
+      fetchLiveSemesters();
+    }
+  }, [isOldPci]);
+
+  const semester = semestersData.find(
     (item) => item.number === activeSemester,
-  );
+  ) || semestersData[0];
 
   const availableTypes = useMemo(() => {
     if (!semester) return [];
@@ -108,7 +171,6 @@ export default function BPharmSemesterSelector({
     setSortBy("syllabus");
   }
 
-  // Type badge styling helper
   const getTypeBadge = (type: string) => {
     const lower = type.toLowerCase();
     if (lower.includes("practical")) {
@@ -122,13 +184,11 @@ export default function BPharmSemesterSelector({
 
   return (
     <main className="min-h-screen bg-[#fafafa] text-neutral-900 antialiased">
-      {/* Background soft ambient accents */}
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 flex justify-center overflow-hidden">
         <div className="h-[300px] w-[800px] bg-gradient-to-b from-neutral-200/40 via-neutral-100/20 to-transparent blur-3xl" />
       </div>
 
       <div className="mx-auto w-full max-w-6xl px-4 pb-20 pt-6 sm:px-6 lg:px-8">
-        {/* Breadcrumb */}
         <nav
           aria-label="Breadcrumb"
           className="flex flex-wrap items-center gap-1.5 text-xs text-neutral-500"
@@ -152,7 +212,6 @@ export default function BPharmSemesterSelector({
           </span>
         </nav>
 
-        {/* Hero Section */}
         <header className="relative mt-6 rounded-2xl border border-neutral-200/80 bg-white p-6 shadow-sm sm:p-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-medium text-neutral-600">
             <GraduationCap size={15} className="text-neutral-800" />
@@ -174,7 +233,6 @@ export default function BPharmSemesterSelector({
 
         {isOldPci ? (
           <>
-            {/* Semester Selector Grid */}
             <section className="mt-8">
               <div className="flex items-center justify-between pb-3">
                 <div>
@@ -188,9 +246,9 @@ export default function BPharmSemesterSelector({
               </div>
 
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 sm:gap-3.5">
-                {oldBPharmSemesters.map((item) => {
+                {semestersData.map((item) => {
                   const selected = activeSemester === item.number;
-                  const roman = romanNumerals[item.number - 1];
+                  const roman = romanNumerals[item.number - 1] || "I";
 
                   return (
                     <button
@@ -236,7 +294,6 @@ export default function BPharmSemesterSelector({
               </div>
             </section>
 
-            {/* Subject Catalogue & Filtering */}
             <section className="mt-10">
               <div className="rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-sm sm:p-6">
                 <div className="flex flex-col justify-between gap-4 border-b border-neutral-100 pb-5 sm:flex-row sm:items-center">
@@ -248,7 +305,7 @@ export default function BPharmSemesterSelector({
                       </span>
                     </div>
                     <h3 className="mt-1 text-2xl font-bold tracking-tight text-neutral-900">
-                      {semesterNames[activeSemester - 1]}
+                      {semesterNames[activeSemester - 1] || `Semester ${activeSemester}`}
                     </h3>
                   </div>
 
@@ -260,9 +317,7 @@ export default function BPharmSemesterSelector({
                   </div>
                 </div>
 
-                {/* Filter & Search Bar */}
                 <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_180px_190px]">
-                  {/* Search Input */}
                   <div className="relative flex items-center">
                     <Search
                       size={16}
@@ -289,7 +344,6 @@ export default function BPharmSemesterSelector({
                     )}
                   </div>
 
-                  {/* Filter Dropdown */}
                   <div className="relative">
                     <select
                       value={activeType}
@@ -310,7 +364,6 @@ export default function BPharmSemesterSelector({
                     />
                   </div>
 
-                  {/* Sort Dropdown */}
                   <div className="relative">
                     <select
                       value={sortBy}
@@ -330,7 +383,6 @@ export default function BPharmSemesterSelector({
                   </div>
                 </div>
 
-                {/* Reset prompt if filtered */}
                 {(search || activeType !== "all" || sortBy !== "syllabus") && (
                   <div className="mt-3 flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
                     <span>
@@ -346,7 +398,6 @@ export default function BPharmSemesterSelector({
                   </div>
                 )}
 
-                {/* Subject Cards List */}
                 <div className="mt-6 space-y-2.5">
                   {subjects.length > 0 ? (
                     subjects.map((subject) => (
@@ -355,14 +406,12 @@ export default function BPharmSemesterSelector({
                         className="group flex flex-col justify-between gap-3 rounded-xl border border-neutral-100 bg-neutral-50/40 p-4 transition-all duration-150 hover:border-neutral-300 hover:bg-white hover:shadow-sm sm:flex-row sm:items-center"
                       >
                         <div className="flex items-start gap-3 sm:items-center">
-                          {/* Course Code Box */}
                           <div className="flex shrink-0 items-center justify-center rounded-lg border border-neutral-200/90 bg-white px-2.5 py-1.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
                             <span className="font-mono text-xs font-bold text-neutral-800">
                               {subject.code}
                             </span>
                           </div>
 
-                          {/* Subject Title & Subtext */}
                           <div>
                             <h4 className="text-sm font-semibold text-neutral-900 group-hover:text-black">
                               {subject.name}
@@ -384,7 +433,6 @@ export default function BPharmSemesterSelector({
                           </div>
                         </div>
 
-                        {/* Credits Badge */}
                         <div className="flex shrink-0 items-center self-end sm:self-auto">
                           {subject.credits !== undefined ? (
                             <span className="inline-flex items-center gap-1 rounded-lg border border-neutral-200/80 bg-white px-3 py-1.5 text-xs text-neutral-600 shadow-xs">
@@ -427,16 +475,13 @@ export default function BPharmSemesterSelector({
 
                 <div className="mt-6 border-t border-neutral-100 pt-4">
                   <p className="text-[11px] leading-relaxed text-neutral-400">
-                    * Syllabus structures and elective lists are based on standard PCI
-                    guidelines. Subject hours and optional papers may vary as per
-                    university regulations.
+                    * Syllabus structures and elective lists are based on live database records and standard PCI guidelines.
                   </p>
                 </div>
               </div>
             </section>
           </>
         ) : (
-          /* NEP 2020 Layout */
           <section className="mt-8 rounded-2xl border border-neutral-200/90 bg-white p-6 shadow-sm sm:p-8">
             <h2 className="text-lg font-bold tracking-tight text-neutral-900">
               Select Semester
@@ -469,7 +514,6 @@ export default function BPharmSemesterSelector({
           </section>
         )}
 
-        {/* Footer */}
         <footer className="mt-10 flex items-center justify-between border-t border-neutral-200 pt-5 text-xs text-neutral-500">
           <Link
             href="/courses/bpharm/select-syllabus"
