@@ -1,7 +1,6 @@
-
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -18,6 +17,12 @@ import { createClient } from "@/lib/supabase/client";
 
 type PageStatus = "loading" | "authorized" | "forbidden" | "error";
 
+type AdminApiResponse = {
+  error?: string;
+  ok?: boolean;
+  role?: string;
+};
+
 export default function AdminPage() {
   const router = useRouter();
 
@@ -25,111 +30,144 @@ export default function AdminPage() {
   const [email, setEmail] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const requestStarted = useRef(false);
 
-    async function verifyAdmin() {
-      try {
-        const supabase = createClient();
+  const verifyAdmin = useCallback(async (signal: AbortSignal) => {
+    setErrorMessage("");
+
+    try {
+      const supabase = createClient();
+
+      const {
+        data: { session: currentSession },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (signal.aborted) return;
+
+      if (sessionError) {
+        throw sessionError;
+      }
+
+      if (!currentSession) {
+        router.replace("/admin/login");
+        return;
+      }
+
+      let session = currentSession;
+
+      // Refresh only when the access token has expired or is about to expire.
+      const expiresAt = session.expires_at ?? 0;
+      const tokenNeedsRefresh = expiresAt <= Math.floor(Date.now() / 1000) + 30;
+
+      if (tokenNeedsRefresh) {
         const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession();
+          data: { session: refreshedSession },
+          error: refreshError,
+        } = await supabase.auth.refreshSession();
 
-        if (error) throw error;
+        if (signal.aborted) return;
 
-        if (!session) {
-          router.replace("/admin/login");
-          return;
-        }
-
-        if (!cancelled) {
-          setEmail(session.user.email ?? "");
-        }
-
-        
-const response = await fetch(
-  "https://miltons-pharma-api.miltonbiswasdev.workers.dev/api/admin/me",
-  {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    cache: "no-store",
-  },
-);
-
-const responseBody = await response.text();
-
-console.log("[Admin verification]", {
-  status: response.status,
-  body: responseBody,
-});
-
-if (cancelled) return;
-
-if (response.status === 401) {
-  await createClient().auth.signOut();
-  router.replace("/admin/login");
-  return;
-}
-
-if (response.status === 403) {
-  setStatus("forbidden");
-  return;
-}
-
-if (!response.ok) {
-  setErrorMessage(
-    `Admin API returned HTTP ${response.status}: ${responseBody.slice(0, 300)}`,
-  );
-  setStatus("error");
-  return;
-}
-
-setStatus("authorized");
-
-
-        if (cancelled) return;
-
-        if (response.status === 401) {
-          await supabase.auth.signOut();
-          router.replace("/admin/login");
-          return;
-        }
-
-        if (response.status === 403) {
-          setStatus("forbidden");
-          return;
-        }
-
-        if (!response.ok) {
-          setErrorMessage(
-            `Admin verification failed (HTTP ${response.status}). Please try again.`,
-          );
+        if (refreshError || !refreshedSession?.access_token) {
+          setErrorMessage("Your session has expired. Please sign in again.");
           setStatus("error");
           return;
         }
 
-        setStatus("authorized");
-      } catch (error) {
-        if (cancelled) return;
+        session = refreshedSession;
+      }
 
-        console.error("Admin verification failed:", error);
+      if (signal.aborted) return;
+
+      setEmail(session.user.email ?? "");
+
+      const response = await fetch("/api/admin/me", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+        signal,
+      });
+
+      const responseBody = await response.text();
+
+      if (signal.aborted) return;
+
+      let result: AdminApiResponse = {};
+
+      try {
+        result = JSON.parse(responseBody) as AdminApiResponse;
+      } catch {
+        // The API may return a non-JSON error page.
+      }
+
+      if (response.status === 401) {
         setErrorMessage(
-          "Unable to verify admin access. Check your internet connection and try again.",
+          result.error ?? "Authentication failed. Please sign in again.",
         );
         setStatus("error");
+        return;
       }
+
+      if (response.status === 403) {
+        setStatus("forbidden");
+        return;
+      }
+
+      if (!response.ok) {
+        console.error("[Admin verification]", {
+          status: response.status,
+          body: responseBody,
+        });
+
+        setErrorMessage(
+          `Admin API returned HTTP ${response.status}. Please try again later.`,
+        );
+        setStatus("error");
+        return;
+      }
+
+      if (result.role !== "admin") {
+        setErrorMessage("The API did not confirm administrator access.");
+        setStatus("error");
+        return;
+      }
+
+      setStatus("authorized");
+    } catch (error) {
+      if (signal.aborted) return;
+
+      console.error("[Admin verification failed]", error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to verify administrator access.",
+      );
+      setStatus("error");
+    }
+  }, [router]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    // Prevent duplicate verification requests during the same mounted effect.
+    if (requestStarted.current && retryKey === 0) {
+      return () => controller.abort();
     }
 
-    void verifyAdmin();
+    requestStarted.current = true;
+    setStatus("loading");
+
+    void verifyAdmin(controller.signal);
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [router]);
+  }, [retryKey, verifyAdmin]);
 
   async function handleLogout() {
     if (loggingOut) return;
@@ -142,17 +180,23 @@ setStatus("authorized");
 
       if (error) throw error;
 
-      window.location.assign("/admin/login");
+      router.replace("/admin/login");
+      router.refresh();
     } catch (error) {
-      console.error("Admin logout failed:", error);
+      console.error("[Admin logout failed]", error);
       setErrorMessage("Logout failed. Please try again.");
       setLoggingOut(false);
     }
   }
 
+  function handleRetry() {
+    requestStarted.current = false;
+    setRetryKey((key) => key + 1);
+  }
+
   if (status === "loading") {
     return (
-      <main className="flex min-h-[70vh] items-center justify-center bg-white px-5 text-black">
+      <main className="flex min-h-screen items-center justify-center bg-white px-5 text-black">
         <div className="flex items-center gap-3 text-sm text-neutral-600">
           <LoaderCircle className="animate-spin" size={20} />
           Verifying administrator access...
@@ -163,17 +207,20 @@ setStatus("authorized");
 
   if (status === "forbidden") {
     return (
-      <main className="flex min-h-[80vh] items-center justify-center bg-white px-5 text-black">
+      <main className="flex min-h-screen items-center justify-center bg-white px-5 text-black">
         <section className="w-full max-w-md text-center">
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-neutral-200">
             <LockKeyhole size={25} />
           </div>
+
           <h1 className="text-2xl font-semibold tracking-tight">
             Access denied
           </h1>
+
           <p className="mt-3 text-sm leading-6 text-neutral-600">
             This account does not have administrator permissions.
           </p>
+
           <Link
             href="/"
             className="mt-6 inline-flex min-h-11 items-center justify-center rounded-full bg-black px-6 text-sm font-medium text-white"
@@ -187,19 +234,33 @@ setStatus("authorized");
 
   if (status === "error") {
     return (
-      <main className="flex min-h-[70vh] items-center justify-center bg-white px-5 text-black">
+      <main className="flex min-h-screen items-center justify-center bg-white px-5 text-black">
         <section className="w-full max-w-md">
-          <h1 className="text-xl font-semibold">Admin verification failed</h1>
-          <p className="mt-3 text-sm leading-6 text-neutral-600">
+          <h1 className="text-xl font-semibold">
+            Admin verification failed
+          </h1>
+
+          <p className="mt-3 wrap-break-word text-sm leading-6 text-neutral-600">
             {errorMessage}
           </p>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="mt-5 rounded-full bg-black px-5 py-3 text-sm font-medium text-white"
-          >
-            Try again
-          </button>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="rounded-full bg-black px-5 py-3 text-sm font-medium text-white"
+            >
+              Try again
+            </button>
+
+            <button
+              type="button"
+              onClick={() => router.push("/admin/login")}
+              className="rounded-full border border-neutral-200 px-5 py-3 text-sm font-medium"
+            >
+              Back to sign in
+            </button>
+          </div>
         </section>
       </main>
     );
@@ -210,19 +271,16 @@ setStatus("authorized");
       title: "Study materials",
       description: "Manage educational content and notes.",
       icon: BookOpen,
-      href: "/admin",
     },
     {
       title: "Articles",
       description: "Review and manage educational articles.",
       icon: FileText,
-      href: "/admin",
     },
     {
       title: "Projects",
       description: "Manage student projects and resources.",
       icon: FolderOpen,
-      href: "/admin",
     },
   ];
 
@@ -274,7 +332,7 @@ setStatus("authorized");
 
           <div className="text-sm sm:text-right">
             <p className="text-neutral-500">Signed in as</p>
-            <p className="mt-1 break-all font-medium">{email}</p>
+            <p className="mt-1 wrap-break-word font-medium">{email}</p>
           </div>
         </section>
 
@@ -310,9 +368,11 @@ setStatus("authorized");
 
         <section className="mt-6 rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
           <h2 className="font-semibold">Administrator account</h2>
-          <p className="mt-2 break-all text-sm text-neutral-600">
+
+          <p className="mt-2 wrap-break-word text-sm text-neutral-600">
             {email}
           </p>
+
           <p className="mt-3 text-sm leading-6 text-neutral-500">
             Access to this dashboard is checked against the backend
             administrator authorization endpoint. Content management

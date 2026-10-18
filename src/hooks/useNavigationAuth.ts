@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -19,25 +18,42 @@ export function useNavigationAuth(): NavigationAuth {
   useEffect(() => {
     const supabase = createClient();
     let active = true;
+    let requestId = 0;
 
-    async function checkAdmin(accessToken: string) {
+    async function checkAdmin() {
+      const currentRequest = ++requestId;
+
       try {
-        const response = await fetch(
-          "https://miltons-pharma-api.miltonbiswasdev.workers.dev/api/admin/me",
-          {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-            cache: "no-store",
-          },
-        );
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
 
-        if (active) {
+        if (error || !session?.access_token) {
+          if (active && currentRequest === requestId) {
+            setIsAdmin(false);
+          }
+          return;
+        }
+
+        const response = await fetch("/api/admin/me", {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            Accept: "application/json",
+          },
+          cache: "no-store",
+        });
+
+        if (active && currentRequest === requestId) {
           setIsAdmin(response.ok);
         }
-      } catch {
-        if (active) setIsAdmin(false);
+      } catch (error) {
+        console.error("[Navigation admin verification]", error);
+
+        if (active && currentRequest === requestId) {
+          setIsAdmin(false);
+        }
       }
     }
 
@@ -49,6 +65,7 @@ export function useNavigationAuth(): NavigationAuth {
       setUser(session?.user ?? null);
 
       if (!session) {
+        ++requestId;
         setIsAdmin(false);
         setLoading(false);
         return;
@@ -56,14 +73,22 @@ export function useNavigationAuth(): NavigationAuth {
 
       setLoading(false);
 
-      if (event === "INITIAL_SESSION" || event === "SIGNED_IN" ||
-          event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
-        void checkAdmin(session.access_token);
+      if (
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "USER_UPDATED"
+      ) {
+        // Run after the auth callback completes.
+        setTimeout(() => {
+          if (active) void checkAdmin();
+        }, 0);
       }
     });
 
     return () => {
       active = false;
+      ++requestId;
       subscription.unsubscribe();
     };
   }, []);
